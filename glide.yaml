@@ -1,0 +1,8 @@
+package: github.com/sportsru/ios-sender
+import:
+  - package: github.com/BurntSushi/toml
+  - package: github.com/davecgh/go-spew
+  - package: github.com/nsqio/go-nsq
+    ref: v1.0.5
+  - package: github.com/mreiferson/go-snappystream
+  - package: gopkg.in/tomb.v2
