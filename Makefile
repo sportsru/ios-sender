@@ -10,7 +10,7 @@
 # 3) make all
 
 PKGSDIRS=$(shell find -L . -type f -name "*.go" -not -path "./vendor/*" -not -name '*_string.go')
-#VERSION := $(shell git describe --tags)
+VERSION ?= $(shell git describe --tags)
 # VERSION := 2.0
 #PATH := ${GOPATH}/bin:${PATH}
 
