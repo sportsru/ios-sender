@@ -1,7 +1,7 @@
 .PHONY: all build test lint vet fmt travis coverage checkfmt prepare updep tools extra-tools generate
 # Usage example:
 # 1) make updep 
-# 2) RACE_FLAG=-race VERSION=2.0-prerelease make install
+# 2) RACE_FLAG=-race BIN_VERSION=2.0-prerelease make install
 #
 # development flow example:
 # 1) make tools
@@ -10,11 +10,11 @@
 # 3) make all
 
 PKGSDIRS=$(shell find -L . -type f -name "*.go" -not -path "./vendor/*" -not -name '*_string.go')
-VERSION ?= $(shell git describe --tags)
+BIN_VERSION ?= $(shell git describe --tags)
 # VERSION := 2.0
 #PATH := ${GOPATH}/bin:${PATH}
 
-LDFLAGS := -ldflags="-X main.VERSION=${VERSION}"
+LDFLAGS := -ldflags="-X main.VERSION=${BIN_VERSION}"
 
 GO_ENV := GO15VENDOREXPERIMENT=1
 
