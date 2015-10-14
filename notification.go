@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -219,11 +220,12 @@ func (n *Notify) ToBinary(id uint32, token []byte) ([]byte, error) {
 		uint16(len(token)),
 		token,
 		uint16(len(payload)),
-		payload,
+		[]byte(payload),
 	}
-	for chunk := range data {
+	for idx, chunk := range data {
 		err = binary.Write(buffer, binary.BigEndian, chunk)
 		if err != nil {
+			log.Println("binary.Write failed on index:", idx)
 			return buffer.Bytes(), err
 		}
 	}
