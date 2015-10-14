@@ -173,7 +173,7 @@ func main() {
 func writeResponseWithErr(w http.ResponseWriter, s string) {
 	_, err := w.Write([]byte(s))
 	if err != nil {
-		log.Println("ERROR on http response:", err)
+		log.Println("http err response:", err)
 	}
 }
 
@@ -194,7 +194,7 @@ func InitHubWithConfig(config TomlConfig) *Hub {
 		client, err = testAPNS(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
 		connections[appCfg.Name] = client
 		if err != nil {
-			log.Println("[ERROR]", appCfg.Name, "connection failed: ", err)
+			log.Println("ERROR:", appCfg.Name, "connection failed:", err)
 			continue
 		}
 		hubStat.Set(appCfg.Name, client.Stat)
@@ -413,7 +413,7 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 
 			atomic.AddInt32(&cStat.Drop, 1)
 			atomic.AddInt32(&stat.drop, 1)
-			log.Printf("Message %v, SendTo is fucked up: %s\n", msgCommonInfo, err)
+			log.Printf("ERROR: message %v, .SendTo() is fucked up: %s\n", msgCommonInfo, err)
 			return nil
 		}
 		atomic.AddInt32(&cStat.Send, 1)
