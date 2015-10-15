@@ -13,7 +13,7 @@ import (
 
 // WebServer stores global state of web server
 type WebServer struct {
-	nc NsqConsumerLocked
+	nc *NsqConsumerLocked
 }
 
 // Run starts tcp listener for http server on addr

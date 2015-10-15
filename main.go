@@ -162,7 +162,7 @@ func main() {
 		end <- struct{}{}
 	}()
 
-	server := &WebServer{nc: hub.NsqConsumerL}
+	server := &WebServer{nc: &hub.NsqConsumerL}
 	err = server.Run(*httpAddr)
 	if err != nil {
 		log.Fatal("ERROR:", err)
