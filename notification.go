@@ -220,7 +220,7 @@ func (n *Notify) ToBinary(id uint32, token []byte) ([]byte, error) {
 		uint16(len(token)),
 		token,
 		uint16(len(payload)),
-		[]byte(payload),
+		payload,
 	}
 	for idx, chunk := range data {
 		err = binary.Write(buffer, binary.BigEndian, chunk)
