@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -168,13 +167,6 @@ func main() {
 		log.Fatal("ERROR:", err)
 	}
 	<-end
-}
-
-func writeResponseWithErr(w http.ResponseWriter, s string) {
-	_, err := w.Write([]byte(s))
-	if err != nil {
-		log.Println("http err response:", err)
-	}
 }
 
 // InitHubWithConfig create *Hub struct based on config and default values
