@@ -270,8 +270,13 @@ func (c *GatewayClient) write(payload []byte) error {
 	return nil
 }
 
+var ErrTokenWrongLength = errors.New("Token length < 64")
+
 // SendTo sends APNS message on the wire
 func (c *GatewayClient) SendTo(n *Notify, token string) error {
+	if len(token) < 64 {
+		return ErrTokenWrongLength
+	}
 	// Convert the hex string iOS returns into a device token.
 	byteToken, err := hex.DecodeString(token)
 	if err != nil {
