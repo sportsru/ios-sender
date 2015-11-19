@@ -251,7 +251,7 @@ func (c *GatewayClient) write(payload []byte) error {
 		// We probably disconnected. Reconnect and resend the message.
 		// TODO: Might want to check the actual error returned?
 		c.L.Error("APNS payload write() call filed: "+err.Error(), "addr", c.Gateway)
-		err := c.Connect()
+		err := c.connect()
 		if err != nil {
 			c.L.Info("APNS reconnect failed"+err.Error(), "addr", c.Gateway)
 			return err
