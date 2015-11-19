@@ -6,3 +6,5 @@ import:
     ref: v1.0.5
   - package: github.com/mreiferson/go-snappystream
   - package: gopkg.in/tomb.v2
+  - package: gopkg.in/inconshreveable/log15.v2
+  - package: github.com/mattn/go-colorable
