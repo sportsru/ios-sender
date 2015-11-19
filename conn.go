@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	//"log"
+	"gopkg.in/inconshreveable/log15.v2"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
+	//	"github.com/davecgh/go-spew/spew"
 	"gopkg.in/tomb.v2"
 )
 
@@ -56,6 +57,8 @@ type GatewayClient struct {
 	//ctx    context.Context
 	//cancel context.CancelFunc
 	Stat *ClientStat
+
+	L log15.Logger
 
 	sync.Mutex
 }
@@ -123,16 +126,18 @@ func NewGatewayClient(name, gateway, certificateFile, keyFile string) (c *Gatewa
 	return c
 }
 
+//func (c *GatewayClient) SetLogger()
+//c.logger = log15.New("bundle", c.Name)
+//
+func (c *GatewayClient) Log() log15.Logger {
+	return c.L
+}
+
 func (c *GatewayClient) connect() (err error) {
 	var cert tls.Certificate
 	_ = atomic.AddInt32(&c.Stat.Reconnects, 1)
+	c.L.Info("connecting")
 
-	if *debug {
-		log.Println("DEBUG: GatewayClient.Connect()")
-	} else {
-		// tmp debug
-		log.Println("GatewayClient.Connect()")
-	}
 	if len(c.CertificateBase64) == 0 && len(c.KeyBase64) == 0 {
 		// The user did not specify raw block contents, so check the filesystem.
 		cert, err = tls.LoadX509KeyPair(c.CertificateFile, c.KeyFile)
@@ -154,7 +159,7 @@ func (c *GatewayClient) connect() (err error) {
 	// d := &net.Dialer{Timeout: 3 * time.Second}
 	tlsConn, err := tls.Dial("tcp", c.Gateway, tlsConf)
 	if err != nil {
-		log.Println("tls.Deal error:", err)
+		c.L.Error("tls.Deal failed: " + err.Error())
 		return err
 	}
 
@@ -172,7 +177,7 @@ func (c *GatewayClient) connect() (err error) {
 const closeErrStr = "use of closed network connection"
 
 func (c *GatewayClient) loop() error {
-	defer log.Println("loop() defer called")
+	//// defer log.Println("loop() defer called")
 
 	c.LoopDone = make(chan struct{})
 	c.ErrCh = make(chan error)
@@ -186,11 +191,10 @@ func (c *GatewayClient) loop() error {
 			}
 			err = nerr
 		}
-		log.Printf("App '%v': error=%v", c.Name, readErr)
+		c.L.Error("response error: " + readErr.Error())
 	}
-	log.Printf("App %v: stop", c.Name)
+	c.L.Debug("error loop stop")
 	c.t.Kill(nil)
-	log.Println("connection->tomb->Kill() called successfully")
 
 	c.Lock()
 	c.Connected = false
@@ -224,14 +228,11 @@ func (c *GatewayClient) Close() error {
 	if !c.Connected {
 		return nil
 	}
-	c.Connected = false
 
+	c.Connected = false
 	err := c.TLSConn.Close()
 	dieStatus := <-c.t.Dying()
-
-	if *debug {
-		log.Println("dieStatus: ", dieStatus) // {}
-	}
+	c.L.Info("client closed", "dieStatus", dieStatus)
 	c.Stat.SetLastError(err)
 	return err
 }
@@ -240,23 +241,22 @@ func (c *GatewayClient) write(payload []byte) error {
 	state := c.TLSConn.ConnectionState()
 	state.PeerCertificates = nil
 	state.VerifiedChains = nil
-	if *debug {
-		log.Println("Try to write with state")
-		spew.Dump(state)
-	}
+
+	//	c.L.Debug("write with state", "tls_state", log15.Lazy{func () string {
+	//		return spew.Sdump(state)
+	//	}})
 
 	_, err := c.TLSConn.Write(payload)
 	if err != nil {
 		// We probably disconnected. Reconnect and resend the message.
 		// TODO: Might want to check the actual error returned?
-		log.Printf("[APNS] Error writing data to socket: %v\n", err)
-		log.Println("[APNS] *** Server disconnected unexpectedly. ***")
+		c.L.Error("APNS payload write() call filed: "+err.Error(), "addr", c.Gateway)
 		err := c.Connect()
 		if err != nil {
-			log.Printf("[APNS] Could not reconnect to the server: %v\n", err)
+			c.L.Info("APNS reconnect failed"+err.Error(), "addr", c.Gateway)
 			return err
 		}
-		log.Println("[APNS] Reconnected to the server successfully.")
+		c.L.Info("APNS reconnected successfully", "addr", c.Gateway)
 
 		// TODO: This could cause an endless loop of errors.
 		// 		If it's the connection failing, that would be caught above.
@@ -296,7 +296,7 @@ func (c *GatewayClient) SendTo(n *Notify, token string) error {
 	var connErr error
 	c.Lock()
 	if !c.Connected {
-		log.Println("SendTo() && !c.Connected: call c.connect()")
+		////log.Println("SendTo() && !c.Connected: call c.connect()")
 		connErr = c.connect()
 	}
 	c.Unlock()

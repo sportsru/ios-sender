@@ -6,7 +6,7 @@ import (
 	"expvar"
 	"flag"
 	"fmt"
-	"log"
+	// stdlog "log"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,6 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/davecgh/go-spew/spew"
 	nsq "github.com/nsqio/go-nsq"
+	"gopkg.in/inconshreveable/log15.v2"
 )
 
 var hubStat = expvar.NewMap("APNSconections")
@@ -58,7 +59,16 @@ type Hub struct {
 	ProducerTTL int64
 	ConsumerTTL int64
 
+	L      log15.Logger
+	logctx logcontext
+
 	sync.RWMutex
+}
+
+type logcontext struct {
+	hostname string
+	handler  log15.Handler
+	logLvl   log15.Lvl
 }
 
 // HubMessagesStat global messages stat
@@ -123,73 +133,124 @@ type NSQSource struct {
 
 var (
 	configPath  = flag.String("config", "config.toml", "config file")
-	verbose     = flag.Bool("verbose", false, "verbose output")
+	silent      = flag.Bool("silent", false, "no verbose output")
 	debug       = flag.Bool("debug", false, "debug mode (very verbose output)")
 	notSend     = flag.Bool("null", false, "don't send messages (/dev/null mode)")
+	jsonLog     = flag.Bool("json-log", false, "use JSON for logging")
 	httpAddr    = flag.String("http-stat", ":9090", "stat's http addr")
 	showVersion = flag.Bool("version", false, "show version")
+
+	onlyTestAPNS = flag.Bool("test-only", false, "test APNS connections and exit")
 )
+
+var GlobalLog = log15.New()
+
+//var GlobalStderrLog = log15.New()
+
+// var globalLog log15.Logger
 
 func main() {
 	var err error
+	hostname, err := os.Hostname()
+	if err != nil {
+		LogAndDieShort(GlobalLog, err)
+	}
 
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(VERSION)
 		os.Exit(0)
 	}
+	logLvl := log15.LvlInfo
 	if *debug {
-		*verbose = true
+		logLvl = log15.LvlDebug
+	} else if *silent {
+		logLvl = log15.LvlError
 	}
 
+	// logging setup
+	GlobalLog = log15.New("host", hostname)
+	basehandler := log15.StdoutHandler
+	if *jsonLog {
+		basehandler = log15.StreamHandler(os.Stdout, log15.JsonFormat())
+	}
+	loghandler := log15.LvlFilterHandler(logLvl, basehandler)
+	GlobalLog.SetHandler(loghandler)
+
+	// configure
 	var config TomlConfig
 	if _, err = toml.DecodeFile(*configPath, &config); err != nil {
-		log.Fatal(err)
+		LogAndDieShort(GlobalLog, err)
 	}
 	if config.APNS.PayloadMaxSize > PayloadMaxSize {
 		config.APNS.PayloadMaxSize = PayloadMaxSize
 	}
-
-	if *verbose {
-		log.Println("Config: ", spew.Sdump(&config))
+	if *debug {
+		fmt.Fprintln(os.Stderr, "Config => ", spew.Sdump(&config))
 	}
 
-	hub := InitHubWithConfig(config)
+	// create & configure hub
+	hub := &Hub{
+		logctx: logcontext{
+			hostname: hostname,
+			handler:  loghandler,
+			logLvl:   logLvl,
+		},
+		L: GlobalLog,
+	}
+	hub.InitWithConfig(config)
+
+	// run hub
 	end := make(chan struct{})
 	go func() {
 		hub.Run()
 		end <- struct{}{}
 	}()
 
+	// run webserver (expvar & control)
 	server := &WebServer{nc: &hub.NsqConsumerL}
 	err = server.Run(*httpAddr)
 	if err != nil {
-		log.Fatal("ERROR:", err)
+		LogAndDieShort(GlobalLog, err)
 	}
 	<-end
+	GlobalLog.Info("Bye!")
 }
 
 // InitHubWithConfig create *Hub struct based on config and default values
-func InitHubWithConfig(config TomlConfig) *Hub {
+func (h *Hub) InitWithConfig(config TomlConfig) {
 	var (
-		err    error
-		client *GatewayClient
+		err       error
+		errorsCnt int
 	)
 
 	connections := make(map[string]*GatewayClient)
 	for nick, appCfg := range config.APNSapp {
-		fmt.Println(nick)
+		_ = nick
 		gateway := Gateway
 		if appCfg.Sandbox {
 			gateway = GatewaySandbox
 		}
-		client, err = testAPNS(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
+		//testAPNS(name, addr, open, private string) (client *GatewayClient, err error) {
+		client := NewGatewayClient(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
+		clientLog := log15.New("host", h.logctx.hostname, "app", appCfg.Name)
+		//clientLog.SetHandler(log15.LvlFilterHandler(h.logctx.logLvl, h.logctx.handler))
+		clientLog.SetHandler(h.logctx.handler)
+
+		client.L = clientLog
+
 		connections[appCfg.Name] = client
+		err = testAPNS(client)
+		hubStat.Set(appCfg.Name, client.Stat)
 		if err != nil {
-			log.Println("ERROR:", appCfg.Name, "connection failed:", err)
+			h.L.Error("APNS client test failed"+err.Error(), "app", appCfg.Name)
+			errorsCnt++
 			continue
 		}
-		hubStat.Set(appCfg.Name, client.Stat)
+		clientLog.Info("connection OK")
+	}
+	if *onlyTestAPNS {
+		os.Exit(errorsCnt)
 	}
 
 	// TODO: move source ini to separate func
@@ -197,7 +258,7 @@ func InitHubWithConfig(config TomlConfig) *Hub {
 	if concurrency <= 0 {
 		concurrency = 100 // FIXME: move to const
 	}
-	log.Println("Set Nsq consumer concurrency to", concurrency)
+	h.L.Debug("set Nsq consumer concurrency", "n", concurrency)
 
 	source := &NSQSource{
 		Topic:       config.NSQ.Topic,
@@ -213,24 +274,17 @@ func InitHubWithConfig(config TomlConfig) *Hub {
 	}
 	source.LogLevel, err = GetNSQLogLevel(config.NSQ.LogLevel)
 	if err != nil {
-		log.Fatal("log_level parse failed", err)
+		LogAndDieShort(h.L, err)
 	}
+	h.L.Debug("Init Nsq producer", "config", spew.Sdump(&source))
 
-	if *verbose {
-		log.Println("Nsq producer config")
-		spew.Dump(&source)
-	}
+	h.Consumers = connections
+	h.Producer = source
+	h.MessagesStat = &HubMessagesStat{}
 
-	hub := Hub{
-		Consumers:    connections,
-		Producer:     source,
-		MessagesStat: &HubMessagesStat{},
-
-		Config:      &config,
-		ProducerTTL: parseTTLtoSeconds(config.NSQ.TTL),
-		ConsumerTTL: parseTTLtoSeconds(config.APNS.TTL),
-	}
-	return &hub
+	h.Config = &config
+	h.ProducerTTL = parseTTLtoSeconds(config.NSQ.TTL)
+	h.ConsumerTTL = parseTTLtoSeconds(config.APNS.TTL)
 }
 
 func parseTTLtoSeconds(s string) int64 {
@@ -258,44 +312,34 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case <-nsqConsumer.StopChan:
-			// TODO: disconnect all (connections cleanup)
-			log.Println("MessagesStat:")
-			spew.Dump(&h.MessagesStat)
-
-			log.Println("hubStat:")
-			log.Println(hubStat.String())
-			//os.Exit(1)
+			// MAYBE: disconnect all (connections cleanup)
+			// spew.Dump(&h.MessagesStat)
+			h.L.Info("hub stopped", "stat", hubStat.String())
 			return
 		case sig := <-sigChan:
 			// TODO: ADD exit by timeout (if any problem with NSQ)
-			log.Println("Got signal", sig.String(), "stop")
+			h.L.Debug("Got stop signal", "num", sig.String())
+			_ = sig
 			nsqConsumer.Stop()
-			log.Println("nsqConsumer.Stopped")
+			h.L.Debug("nsqConsumer.Stopped")
 		}
 	}
 }
 
-func testAPNS(name, addr, open, private string) (client *GatewayClient, err error) {
-	client = NewGatewayClient(name, addr, open, private)
+func testAPNS(client *GatewayClient) (err error) {
 	err = client.Connect()
 	if err != nil {
-		//panic(name + " connection error:" + err.Error())
 		return
 	}
 
-	log.Println(name, "wait for connection test")
+	client.L.Debug("wait for connection test")
 	time.Sleep(50 * time.Millisecond)
 	if !client.Connected {
 		err = errors.New("disconnected unexpectedly")
 		return
 	}
 
-	fmt.Printf("%v: connection to %v with keys %v, %v is OK\n",
-		name, addr, open, private)
-
-	// TODO: send in "Close()" method smth to stop Error handling
-	err = client.Close()
-	return
+	return client.Close()
 }
 
 // HandleMessage process NSQ messages
@@ -306,25 +350,25 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	stat := h.MessagesStat
 	counter := atomic.AddInt32(&stat.total, 1)
 
-	if *debug {
-		log.Println("Start NSQ HandleMessage with counter=", counter)
-		defer log.Println("end NSQ HandleMessage with counter=", counter)
-	}
-
+	// TODO: if *debug {
+	h.L.Debug("handle NSQ message", "counter", counter)
+	defer h.L.Debug("finished NSQ message", "counter", counter)
+	// }
 	m.DisableAutoResponse()
 
 	// http://blog.golang.org/json-and-go
 	j := &NSQpush{}
 	err = json.Unmarshal(m.Body, &j)
-
 	if err != nil {
-		log.Printf("ERROR: failed to parse JSON - %s: %s\n", err.Error(), string(m.Body))
+		h.L.Error("failed to parse JSON: "+err.Error(), "body", string(m.Body))
 		atomic.AddInt32(&stat.drop, 1)
 		m.Finish()
 		return nil
 	}
+
 	if len(j.AppInfo.Token) < 64 {
-		log.Printf("ERROR: token %s is less than 64 characters\n", j.AppInfo.Token)
+		// fmt.Sprintf("token %s is less than 64 characters", j.AppInfo.Token)
+		h.L.Error("token is less than 64 characters", "app_info", j.AppInfo)
 		atomic.AddInt32(&stat.drop, 1)
 		m.Finish()
 		return nil
@@ -340,23 +384,19 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	if !ok {
 		m.Finish()
 		atomic.AddInt32(&stat.skip, 1)
-		// TODO: add stat by app for unknown apps by name
-		// skip
-		if *debug {
-			// silent here, because other worker instance with different config
-			// could serve this app
-			log.Printf("Appname %s not found, skip message", name)
-		}
+		h.L.Debug("appname not found, skip message", "appname", name)
+		// MAYBE: add stat for unknown apps?
 		return nil
 	}
-
 	cStat := conn.Stat
-	// hubStat.Get(name).(*expvar.Map)
 
-	msgCommonInfo := fmt.Sprintf("id=%v, app=%v; token=%v", counter, name, j.AppInfo.Token)
-	if *verbose {
-		log.Printf("Message %v, attempt=%v; ", msgCommonInfo, m.Attempts)
+	// Prepare logging context
+	msgCtx := []interface{}{
+		"id", counter,
+		"app", name,
+		"token", j.AppInfo.Token,
 	}
+	h.L.Debug("start process message", msgCtx...)
 
 	// Check TTL
 	nowUnix := time.Now().UTC().Unix()
@@ -367,8 +407,14 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 
 		atomic.AddInt32(&cStat.Drop, 1)
 		atomic.AddInt32(&stat.drop, 1)
-		log.Printf("Message %v; TTL(%v) is over, timestamp=%v, delta=%vs, body=%v",
-			msgCommonInfo, h.ProducerTTL, jTs, delta, string(m.Body))
+
+		msgTTLCtx := append(msgCtx, []interface{}{
+			"TTL", h.ProducerTTL,
+			"timestamp", jTs,
+			"delta", delta,
+			"body", string(m.Body),
+		}...)
+		h.L.Info("message TTL is over", msgTTLCtx...)
 		return nil
 	}
 
@@ -396,8 +442,12 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	notify.SetExpiry(jTs + h.ConsumerTTL)
 
 	pStr, _ := notify.ToString()
-	log.Printf("Message %v, seconds left=%v, with payload: %v", msgCommonInfo, delta, pStr)
+	msgCtx = append(msgCtx, []interface{}{
+		"seconds_left", delta,
+		"payload", pStr,
+	}...)
 
+	msg := "message sent OK"
 	if !*notSend {
 		err = conn.SendTo(notify, j.AppInfo.Token)
 		if err != nil {
@@ -405,7 +455,7 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 
 			atomic.AddInt32(&cStat.Drop, 1)
 			atomic.AddInt32(&stat.drop, 1)
-			log.Printf("ERROR: message %v, .SendTo() is fucked up: %s\n", msgCommonInfo, err)
+			h.L.Error("connection send failed: "+err.Error(), msgCtx...)
 			return nil
 		}
 		atomic.AddInt32(&cStat.Send, 1)
@@ -413,8 +463,9 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	} else {
 		atomic.AddInt32(&cStat.Skip, 1)
 		atomic.AddInt32(&stat.skip, 1)
-		log.Printf("Mesaage %v to /dev/null", msgCommonInfo)
+		msg = "message sent to /dev/null OK"
 	}
+	h.L.Info(msg, msgCtx...)
 
 	m.Finish()
 	return nil
@@ -422,12 +473,13 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 
 // RunWithHandler configure and start NSQ handler
 func (s *NSQSource) RunWithHandler(h nsq.Handler) *nsq.Consumer {
-	var err error
-	var consumer *nsq.Consumer
+	var (
+		err      error
+		consumer *nsq.Consumer
+	)
+	hub, _ := h.(*Hub)
 	// https://godoc.org/github.com/nsqio/go-nsq#Config
 	cfg := nsq.NewConfig()
-
-	//log.Println("Default nsq config:", spew.Sdump(cfg))
 
 	cfg.UserAgent = fmt.Sprintf("mpush-apns-agent/%s", VERSION)
 	cfg.DefaultRequeueDelay = time.Second * 5
@@ -437,14 +489,14 @@ func (s *NSQSource) RunWithHandler(h nsq.Handler) *nsq.Consumer {
 
 	consumer, err = nsq.NewConsumer(s.Topic, s.Channel, cfg)
 	if err != nil {
-		log.Fatalf(err.Error())
+		LogAndDie(hub.L, "NSQ consumer creation error", err, []interface{}{})
 	}
 
 	consumer.SetLogger(logger, s.LogLevel)
 
-	// our messages consumer1 *hub added to NSQ handlers here
+	// set NSQ handler
 	consumer.AddConcurrentHandlers(h, s.Concurrency)
-	log.Println("Add *hub to NSQ handlers with config:", spew.Sdump(cfg))
+	hub.L.Debug("Add *hub to NSQ handlers", "config", spew.Sdump(cfg))
 
 	var addrs []string
 	if s.LookupAddrs != nil {
@@ -457,10 +509,21 @@ func (s *NSQSource) RunWithHandler(h nsq.Handler) *nsq.Consumer {
 		err = errors.New("You should set at least one nsqd or nsqlookupd address")
 	}
 
+	logCtx := []interface{}{"addrs", addrs}
 	if err != nil {
-		log.Fatalf("connection error: to %v, %s", addrs, err.Error())
+		LogAndDie(hub.L, "NSQ connection error", err, logCtx)
 	}
-	log.Println("connected to", addrs)
+	hub.L.Debug("NSQ connected to", logCtx...)
 
 	return consumer
+}
+
+func LogAndDieShort(l log15.Logger, err error) {
+	l.Error(err.Error())
+	panic(err)
+}
+
+func LogAndDie(l log15.Logger, msg string, err error, args []interface{}) {
+	l.Error(msg+err.Error(), args...)
+	panic(err)
 }
