@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/sportsru/ios-sender/config"
 )
 
 // WebServer stores global state of web server
@@ -49,7 +51,7 @@ func (s *WebServer) HandleNSQLogLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loglevel, err := GetNSQLogLevel(strings.ToLower(level))
+	loglevel, err := config.GetNSQLogLevel(strings.ToLower(level))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

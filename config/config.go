@@ -1,14 +1,11 @@
-package main
+package config
 
 import (
 	"errors"
-	"log"
-	"os"
-
 	nsq "github.com/nsqio/go-nsq"
 )
 
-var logger = log.New(os.Stderr, "", log.Flags())
+//
 
 // TomlConfig config from toml file
 type TomlConfig struct {

@@ -6,7 +6,7 @@ import (
 	"expvar"
 	"flag"
 	"fmt"
-	// stdlog "log"
+	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sportsru/ios-sender/config"
 	"github.com/BurntSushi/toml"
 	"github.com/davecgh/go-spew/spew"
 	nsq "github.com/nsqio/go-nsq"
@@ -53,7 +54,7 @@ type Hub struct {
 	// global hub statistics
 	MessagesStat *HubMessagesStat
 	// config from toml file
-	Config *TomlConfig
+	Config *config.TomlConfig
 
 	// TTL in seconds
 	ProducerTTL int64
@@ -178,15 +179,15 @@ func main() {
 	GlobalLog.SetHandler(loghandler)
 
 	// configure
-	var config TomlConfig
-	if _, err = toml.DecodeFile(*configPath, &config); err != nil {
+	var cfg config.TomlConfig
+	if _, err = toml.DecodeFile(*configPath, &cfg); err != nil {
 		LogAndDieShort(GlobalLog, err)
 	}
-	if config.APNS.PayloadMaxSize > PayloadMaxSize {
-		config.APNS.PayloadMaxSize = PayloadMaxSize
+	if cfg.APNS.PayloadMaxSize > PayloadMaxSize {
+		cfg.APNS.PayloadMaxSize = PayloadMaxSize
 	}
 	if *debug {
-		fmt.Fprintln(os.Stderr, "Config => ", spew.Sdump(&config))
+		fmt.Fprintln(os.Stderr, "Config => ", spew.Sdump(&cfg))
 	}
 
 	// create & configure hub
@@ -198,7 +199,7 @@ func main() {
 		},
 		L: GlobalLog,
 	}
-	hub.InitWithConfig(config)
+	hub.InitWithConfig(cfg)
 
 	// run hub
 	end := make(chan struct{})
@@ -218,14 +219,14 @@ func main() {
 }
 
 // InitHubWithConfig create *Hub struct based on config and default values
-func (h *Hub) InitWithConfig(config TomlConfig) {
+func (h *Hub) InitWithConfig(cfg config.TomlConfig) {
 	var (
 		err       error
 		errorsCnt int
 	)
 
 	connections := make(map[string]*GatewayClient)
-	for nick, appCfg := range config.APNSapp {
+	for nick, appCfg := range cfg.APNSapp {
 		_ = nick
 		gateway := Gateway
 		if appCfg.Sandbox {
@@ -254,25 +255,25 @@ func (h *Hub) InitWithConfig(config TomlConfig) {
 	}
 
 	// TODO: move source ini to separate func
-	concurrency := config.NSQ.Concurrency
+	concurrency := cfg.NSQ.Concurrency
 	if concurrency <= 0 {
 		concurrency = 100 // FIXME: move to const
 	}
 	h.L.Debug("set Nsq consumer concurrency", "n", concurrency)
 
 	source := &NSQSource{
-		Topic:       config.NSQ.Topic,
-		Channel:     config.NSQ.Channel,
-		LookupAddrs: config.NSQ.LookupAddrs,
-		NsqdAddrs:   config.NSQ.NsqdAddrs,
-		MaxInFlight: config.NSQ.MaxInFlight,
-		Concurrency: config.NSQ.Concurrency,
+		Topic:       cfg.NSQ.Topic,
+		Channel:     cfg.NSQ.Channel,
+		LookupAddrs: cfg.NSQ.LookupAddrs,
+		NsqdAddrs:   cfg.NSQ.NsqdAddrs,
+		MaxInFlight: cfg.NSQ.MaxInFlight,
+		Concurrency: cfg.NSQ.Concurrency,
 	}
 
-	if len(config.NSQ.LogLevel) < 1 {
-		config.NSQ.LogLevel = "info" // FIXME: move to const
+	if len(cfg.NSQ.LogLevel) < 1 {
+		cfg.NSQ.LogLevel = "info" // FIXME: move to const
 	}
-	source.LogLevel, err = GetNSQLogLevel(config.NSQ.LogLevel)
+	source.LogLevel, err = config.GetNSQLogLevel(cfg.NSQ.LogLevel)
 	if err != nil {
 		LogAndDieShort(h.L, err)
 	}
@@ -282,9 +283,9 @@ func (h *Hub) InitWithConfig(config TomlConfig) {
 	h.Producer = source
 	h.MessagesStat = &HubMessagesStat{}
 
-	h.Config = &config
-	h.ProducerTTL = parseTTLtoSeconds(config.NSQ.TTL)
-	h.ConsumerTTL = parseTTLtoSeconds(config.APNS.TTL)
+	h.Config = &cfg
+	h.ProducerTTL = parseTTLtoSeconds(cfg.NSQ.TTL)
+	h.ConsumerTTL = parseTTLtoSeconds(cfg.APNS.TTL)
 }
 
 func parseTTLtoSeconds(s string) int64 {
@@ -470,6 +471,9 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	m.Finish()
 	return nil
 }
+
+// TODO: use log15?
+var logger = log.New(os.Stderr, "", log.Flags())
 
 // RunWithHandler configure and start NSQ handler
 func (s *NSQSource) RunWithHandler(h nsq.Handler) *nsq.Consumer {
