@@ -12,6 +12,11 @@ type Feedback struct {
 	Conn *Conn
 }
 
+type FeedbackResult struct {
+	Data  FeedbackTuple
+	Error error
+}
+
 type FeedbackTuple struct {
 	Timestamp   time.Time
 	TokenLength uint16
@@ -63,15 +68,18 @@ func NewFeedbackWithFiles(gw string, certFile string, keyFile string) (Feedback,
 
 // Receive returns a read only channel for APNs feedback. The returned channel
 // will close when there is no more data to be read.
-func (f Feedback) Receive() <-chan FeedbackTuple {
-	fc := make(chan FeedbackTuple)
+func (f Feedback) Receive() <-chan FeedbackResult {
+	fc := make(chan FeedbackResult)
 	go f.receive(fc)
 	return fc
 }
 
-func (f Feedback) receive(fc chan FeedbackTuple) {
+func (f Feedback) receive(fc chan<- FeedbackResult) {
 	err := f.Conn.Connect()
 	if err != nil {
+		fc <- FeedbackResult{
+			Error: err,
+		}
 		close(fc)
 		return
 	}
@@ -84,10 +92,14 @@ func (f Feedback) receive(fc chan FeedbackTuple) {
 
 		_, err := f.Conn.Read(b)
 		if err != nil {
+			fc <- FeedbackResult{Error: err}
 			close(fc)
 			return
 		}
 
-		fc <- feedbackTupleFromBytes(b)
+		fc <- FeedbackResult{
+			Data:  feedbackTupleFromBytes(b),
+			Error: nil,
+		}
 	}
 }
