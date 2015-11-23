@@ -1,35 +1,33 @@
 package apns
 
-
 import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-//"log"
+	//"log"
 	"gopkg.in/inconshreveable/log15.v2"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-//	"github.com/davecgh/go-spew/spew"
+	//	"github.com/davecgh/go-spew/spew"
 	"gopkg.in/tomb.v2"
 )
 
 const (
-// Gateway tcp addr of APNS gateway
-	Gateway = "gateway.push.apple.com:2195"
-// GatewaySandbox tcp addr of APNS sandbox gateway
-	GatewaySandbox = "gateway.sandbox.push.apple.com:2195"
-// Feedback tcp addr of APNS feedback service
-	Feedback = "feedback.push.apple.com:2196"
-// FeedbackSandbox tcp addr of APNS sandbox feedback service
-	FeedbackSandbox = "feedback.sandbox.push.apple.com:2196"
-// DefaultErrorTimeout not in use, but intention was to store
-//			sent messages for this time for async catching APNS errors
+	// Gateway tcp addr of APNS gateway
+	//	Gateway = "gateway.push.apple.com:2195"
+	// GatewaySandbox tcp addr of APNS sandbox gateway
+	//	GatewaySandbox = "gateway.sandbox.push.apple.com:2195"
+	// Feedback tcp addr of APNS feedback service
+	//	Feedback = "feedback.push.apple.com:2196"
+	// FeedbackSandbox tcp addr of APNS sandbox feedback service
+	//	FeedbackSandbox = "feedback.sandbox.push.apple.com:2196"
+	// DefaultErrorTimeout not in use, but intention was to store
+	//			sent messages for this time for async catching APNS errors
 	DefaultErrorTimeout = 1 * time.Second
 )
 
@@ -43,8 +41,9 @@ type GatewayClient struct {
 	KeyFile           string
 	KeyBase64         string
 
-	TLSConn *tls.Conn
-	TLSConf *tls.Config
+	//TLSConn *tls.Conn
+	//TLSConf *tls.Config
+	conn Conn
 
 	NextIdentifier uint32
 	ErrorTimeout   time.Duration
@@ -71,7 +70,7 @@ func BareGatewayClient(gateway, certificateBase64, keyBase64 string) (c *Gateway
 	c.CertificateBase64 = certificateBase64
 	c.KeyBase64 = keyBase64
 	c.ErrorTimeout = DefaultErrorTimeout
-	c.TLSConf = &tls.Config{} // {ClientSessionCache: tls.NewLRUClientSessionCache(0)}
+	c.conn.Conf = &tls.Config{} // {ClientSessionCache: tls.NewLRUClientSessionCache(0)}
 	return c
 }
 
@@ -121,7 +120,7 @@ func NewGatewayClient(name, gateway, certificateFile, keyFile string) (c *Gatewa
 	c.CertificateFile = certificateFile
 	c.KeyFile = keyFile
 	c.ErrorTimeout = DefaultErrorTimeout
-	c.TLSConf = &tls.Config{} // {ClientSessionCache: tls.NewLRUClientSessionCache(0)}
+	c.conn.Conf = &tls.Config{} // {ClientSessionCache: tls.NewLRUClientSessionCache(0)}
 
 	c.Stat = &ClientStat{}
 	return c
@@ -135,36 +134,38 @@ func (c *GatewayClient) Log() log15.Logger {
 }
 
 func (c *GatewayClient) connect() (err error) {
-	var cert tls.Certificate
+	// var cert tls.Certificate
+	var conn Conn
 	_ = atomic.AddInt32(&c.Stat.Reconnects, 1)
 	c.L.Info("connecting")
 
+	// TODO: move to
 	if len(c.CertificateBase64) == 0 && len(c.KeyBase64) == 0 {
 		// The user did not specify raw block contents, so check the filesystem.
-		cert, err = tls.LoadX509KeyPair(c.CertificateFile, c.KeyFile)
+		conn, err = NewConnWithFiles(c.Gateway, c.CertificateFile, c.KeyFile)
 	} else {
 		// The user provided the raw block contents, so use that.
-		cert, err = tls.X509KeyPair([]byte(c.CertificateBase64), []byte(c.KeyBase64))
+		conn, err = NewConn(c.Gateway, c.CertificateBase64, c.KeyBase64)
 	}
-
 	if err != nil {
-		return err
+		return
 	}
 
-	tlsConf := c.TLSConf
-	tlsConf.Certificates = []tls.Certificate{cert}
-	gatewayParts := strings.Split(c.Gateway, ":")
-	tlsConf.ServerName = gatewayParts[0]
+	//	tlsConf := c.conn.Conf
+	//	tlsConf.Certificates = []tls.Certificate{cert}
+	//	gatewayParts := strings.Split(c.Gateway, ":")
+	//	tlsConf.ServerName = gatewayParts[0]
 
 	// TODO: add timeout (DialWithDialer)
 	// d := &net.Dialer{Timeout: 3 * time.Second}
-	tlsConn, err := tls.Dial("tcp", c.Gateway, tlsConf)
+	//	tlsConn, err := tls.Dial("tcp", c.Gateway, tlsConf)
+	err = conn.Connect()
 	if err != nil {
 		c.L.Error("tls.Deal failed: " + err.Error())
 		return err
 	}
 
-	c.TLSConn = tlsConn
+	c.conn = conn
 	c.Connected = true
 	c.Stat.SetConnected(true)
 	c.Stat.SetLastError(errors.New(""))
@@ -231,7 +232,7 @@ func (c *GatewayClient) Close() error {
 	}
 
 	c.Connected = false
-	err := c.TLSConn.Close()
+	err := c.conn.NetConn.Close()
 	dieStatus := <-c.t.Dying()
 	c.L.Info("client closed", "dieStatus", dieStatus)
 	c.Stat.SetLastError(err)
@@ -239,15 +240,18 @@ func (c *GatewayClient) Close() error {
 }
 
 func (c *GatewayClient) write(payload []byte) error {
-	state := c.TLSConn.ConnectionState()
-	state.PeerCertificates = nil
-	state.VerifiedChains = nil
+	conn := c.conn.NetConn
+	/*
+		tlsConn, _ := conn.(*tls.Conn)
+		state := tlsConn.ConnectionState()
+		state.PeerCertificates = nil
+		state.VerifiedChains = nil
+		c.L.Debug("write with state", "tls_state", log15.Lazy{func () string {
+				return spew.Sdump(state)
+		}})
+	*/
 
-	//	c.L.Debug("write with state", "tls_state", log15.Lazy{func () string {
-	//		return spew.Sdump(state)
-	//	}})
-
-	_, err := c.TLSConn.Write(payload)
+	_, err := conn.Write(payload)
 	if err != nil {
 		// We probably disconnected. Reconnect and resend the message.
 		// TODO: Might want to check the actual error returned?
@@ -262,7 +266,7 @@ func (c *GatewayClient) write(payload []byte) error {
 		// TODO: This could cause an endless loop of errors.
 		// 		If it's the connection failing, that would be caught above.
 		// 		So why don't we add a counter to the payload itself?
-		_, err = c.TLSConn.Write(payload)
+		_, err = conn.Write(payload)
 		if err != nil {
 			return err
 		}
@@ -375,7 +379,7 @@ func (c *GatewayClient) readLoop() {
 		}
 		// TODO: проверить что коннект еще числится в живых
 		errorAPNS := NewErrorAPNSbuffer()
-		_, err := c.TLSConn.Read([]byte(errorAPNS))
+		_, err := c.conn.NetConn.Read([]byte(errorAPNS))
 
 		if err != nil {
 			c.ErrCh <- err

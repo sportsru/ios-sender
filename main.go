@@ -16,6 +16,7 @@ import (
 
 	"github.com/sportsru/ios-sender/apns"
 	"github.com/sportsru/ios-sender/config"
+
 	"github.com/BurntSushi/toml"
 	"github.com/davecgh/go-spew/spew"
 	nsq "github.com/nsqio/go-nsq"
@@ -229,9 +230,9 @@ func (h *Hub) InitWithConfig(cfg config.TomlConfig) {
 	connections := make(map[string]*apns.GatewayClient)
 	for nick, appCfg := range cfg.APNSapp {
 		_ = nick
-		gateway := apns.Gateway
+		gateway := apns.ProductionGateway
 		if appCfg.Sandbox {
-			gateway = apns.GatewaySandbox
+			gateway = apns.SandboxGateway
 		}
 		//testAPNS(name, addr, open, private string) (client *GatewayClient, err error) {
 		client := apns.NewGatewayClient(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
