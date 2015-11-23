@@ -1,4 +1,5 @@
-package main
+package apns
+
 
 import (
 	"crypto/tls"
@@ -6,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	//"log"
+//"log"
 	"gopkg.in/inconshreveable/log15.v2"
 	"net"
 	"strings"
@@ -14,21 +15,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"github.com/davecgh/go-spew/spew"
+//	"github.com/davecgh/go-spew/spew"
 	"gopkg.in/tomb.v2"
 )
 
 const (
-	// Gateway tcp addr of APNS gateway
+// Gateway tcp addr of APNS gateway
 	Gateway = "gateway.push.apple.com:2195"
-	// GatewaySandbox tcp addr of APNS sandbox gateway
+// GatewaySandbox tcp addr of APNS sandbox gateway
 	GatewaySandbox = "gateway.sandbox.push.apple.com:2195"
-	// Feedback tcp addr of APNS feedback service
+// Feedback tcp addr of APNS feedback service
 	Feedback = "feedback.push.apple.com:2196"
-	// FeedbackSandbox tcp addr of APNS sandbox feedback service
+// FeedbackSandbox tcp addr of APNS sandbox feedback service
 	FeedbackSandbox = "feedback.sandbox.push.apple.com:2196"
-	// DefaultErrorTimeout not in use, but intention was to store
-	//			sent messages for this time for async catching APNS errors
+// DefaultErrorTimeout not in use, but intention was to store
+//			sent messages for this time for async catching APNS errors
 	DefaultErrorTimeout = 1 * time.Second
 )
 
@@ -186,7 +187,7 @@ func (c *GatewayClient) loop() error {
 	var err error
 	for readErr := range c.ErrCh {
 		if nerr, ok := readErr.(*net.OpError); ok {
-			if nerr.Op == "read" && nerr.Err.Error() == closeErrStr && !*debug {
+			if nerr.Op == "read" && nerr.Err.Error() == closeErrStr { // && !*debug {
 				continue
 			}
 			err = nerr

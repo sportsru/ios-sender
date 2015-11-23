@@ -1,4 +1,4 @@
-package main
+package apns
 
 import (
 	"bytes"
@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	// PayloadMaxSize еhe maximum size allowed for a notification payload was 256 bytes.
-	// Any notifications larger than this limit are refused by Apple.
-	//
-	//  "In iOS 8 and later, the maximum size allowed for a notification payload is 2 kilobytes"
-	// https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html
+// PayloadMaxSize еhe maximum size allowed for a notification payload was 256 bytes.
+// Any notifications larger than this limit are refused by Apple.
+//
+//  "In iOS 8 and later, the maximum size allowed for a notification payload is 2 kilobytes"
+// https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html
 	PayloadMaxSize = 2048
 )
 

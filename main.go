@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sportsru/ios-sender/apns"
 	"github.com/sportsru/ios-sender/config"
 	"github.com/BurntSushi/toml"
 	"github.com/davecgh/go-spew/spew"
@@ -46,7 +47,7 @@ type NsqConsumerLocked struct {
 // stores all global structures
 type Hub struct {
 	// all connections to APNS (per application bundle)
-	Consumers map[string]*GatewayClient
+	Consumers map[string]*apns.GatewayClient
 	// interface for consume messages from NSQ and produce it further
 	Producer MessageProducer
 	// nsq consumer object
@@ -183,8 +184,8 @@ func main() {
 	if _, err = toml.DecodeFile(*configPath, &cfg); err != nil {
 		LogAndDieShort(GlobalLog, err)
 	}
-	if cfg.APNS.PayloadMaxSize > PayloadMaxSize {
-		cfg.APNS.PayloadMaxSize = PayloadMaxSize
+	if cfg.APNS.PayloadMaxSize > apns.PayloadMaxSize {
+		cfg.APNS.PayloadMaxSize = apns.PayloadMaxSize
 	}
 	if *debug {
 		fmt.Fprintln(os.Stderr, "Config => ", spew.Sdump(&cfg))
@@ -225,15 +226,15 @@ func (h *Hub) InitWithConfig(cfg config.TomlConfig) {
 		errorsCnt int
 	)
 
-	connections := make(map[string]*GatewayClient)
+	connections := make(map[string]*apns.GatewayClient)
 	for nick, appCfg := range cfg.APNSapp {
 		_ = nick
-		gateway := Gateway
+		gateway := apns.Gateway
 		if appCfg.Sandbox {
-			gateway = GatewaySandbox
+			gateway = apns.GatewaySandbox
 		}
 		//testAPNS(name, addr, open, private string) (client *GatewayClient, err error) {
-		client := NewGatewayClient(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
+		client := apns.NewGatewayClient(appCfg.Name, gateway, appCfg.KeyOpen, appCfg.KeyPrivate)
 		clientLog := log15.New("host", h.logctx.hostname, "app", appCfg.Name)
 		//clientLog.SetHandler(log15.LvlFilterHandler(h.logctx.logLvl, h.logctx.handler))
 		clientLog.SetHandler(h.logctx.handler)
@@ -327,7 +328,7 @@ func (h *Hub) Run() {
 	}
 }
 
-func testAPNS(client *GatewayClient) (err error) {
+func testAPNS(client *apns.GatewayClient) (err error) {
 	err = client.Connect()
 	if err != nil {
 		return
@@ -420,7 +421,7 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	}
 
 	// create Notify object
-	notify := NewNotify()
+	notify := apns.NewNotify()
 	notify.PayloadLimit = h.Config.APNS.PayloadMaxSize
 
 	message := &notify.Message
