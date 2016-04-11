@@ -10,9 +10,9 @@
 # 3) make all
 
 PKGSDIRS=$(shell find -L . -type f -name "*.go" -not -path "./vendor/*" -not -name '*_string.go')
-BIN_VERSION ?= $(shell git describe --tags)
-# VERSION := 2.0
-#PATH := ${GOPATH}/bin:${PATH}
+GIT_VERSION ?= $(shell git describe --exact-match HEAD 2>/dev/null)
+GIT_VERSION += $(shell git log --pretty=format:'%h' -n 1)
+BIN_VERSION := $(shell echo '${GIT_VERSION}' | tr ' ' '-')
 
 LDFLAGS := -ldflags="-X main.VERSION=${BIN_VERSION}"
 
