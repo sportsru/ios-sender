@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/sportsru/ios-sender/apns"
 )
 
 func TestConnect(t *testing.T) {
@@ -22,7 +24,7 @@ func TestDisconnect(t *testing.T) {
 
 func TestErrorsPrint(t *testing.T) {
 	var str, strU, strFmt string
-	str = fmt.Sprintf("%s", APNSErrorCode(0).String())
+	str = fmt.Sprintf("%s", apns.APNSErrorCode(0).String())
 	if len(str) == 0 {
 		t.Error("Expected non empty description for APNSErrorCode(0)")
 	}
@@ -42,7 +44,7 @@ func TestErrorsPrint(t *testing.T) {
 	}
 	t.Log("APNSErrorCode(0) valid unicode")
 
-	strFmt = fmt.Sprintf("%s", APNSErrorCode(0))
+	strFmt = fmt.Sprintf("%s", apns.APNSErrorCode(0))
 	if strFmt != str {
 		t.Error("Auto strigify not equal String() call")
 	}
