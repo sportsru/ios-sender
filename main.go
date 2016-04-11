@@ -108,6 +108,7 @@ type dbResField struct {
 
 type payloadField struct {
 	Sound string
+	Badge int
 }
 
 type extraField struct {
@@ -433,6 +434,7 @@ func (h *Hub) HandleMessage(m *nsq.Message) error {
 	if len(j.PayloadAPNS.Sound) > 0 {
 		message.Sound = j.PayloadAPNS.Sound
 	}
+	message.Badge = j.PayloadAPNS.Badge
 
 	extra := &payloadExtraField{
 		EventID:  j.Extra.EventID,
